@@ -1789,44 +1789,56 @@ impl<'a, W: Write> Writer<'a, W> {
                 selector,
                 ref cases,
             } => {
-                // Start the switch
-                write!(self.out, "{}", level)?;
-                write!(self.out, "switch(")?;
-                self.write_expr(selector, ctx)?;
-                writeln!(self.out, ") {{")?;
-                let type_postfix = match *ctx.info[selector].ty.inner_with(&self.module.types) {
-                    crate::TypeInner::Scalar {
-                        kind: crate::ScalarKind::Uint,
-                        ..
-                    } => "u",
-                    _ => "",
-                };
-
-                // Write all cases
                 let l2 = level.next();
-                for case in cases {
-                    match case.value {
-                        crate::SwitchValue::Integer(value) => {
-                            writeln!(self.out, "{}case {}{}:", l2, value, type_postfix)?
+
+                if cases.len() == 1 && cases[0].value == crate::SwitchValue::Default {
+                    writeln!(self.out, "{}while(true) {{", level)?;
+
+                    for sta in cases[0].body.iter() {
+                        self.write_stmt(sta, ctx, l2)?;
+                    }
+
+                    writeln!(self.out, "{}break;", l2)?;
+                    writeln!(self.out, "{}}}", level)?;
+                } else {
+                    // Start the switch
+                    write!(self.out, "{}", level)?;
+                    write!(self.out, "switch(")?;
+                    self.write_expr(selector, ctx)?;
+                    writeln!(self.out, ") {{")?;
+                    let type_postfix = match *ctx.info[selector].ty.inner_with(&self.module.types) {
+                        crate::TypeInner::Scalar {
+                            kind: crate::ScalarKind::Uint,
+                            ..
+                        } => "u",
+                        _ => "",
+                    };
+
+                    // Write all cases
+                    for case in cases {
+                        match case.value {
+                            crate::SwitchValue::Integer(value) => {
+                                writeln!(self.out, "{}case {}{}:", l2, value, type_postfix)?
+                            }
+                            crate::SwitchValue::Default => writeln!(self.out, "{}default:", l2)?,
                         }
-                        crate::SwitchValue::Default => writeln!(self.out, "{}default:", l2)?,
+
+                        for sta in case.body.iter() {
+                            self.write_stmt(sta, ctx, l2.next())?;
+                        }
+
+                        // Write fallthrough comment if the case is fallthrough,
+                        // otherwise write a break, if the case is not already
+                        // broken out of at the end of its body.
+                        if case.fall_through {
+                            writeln!(self.out, "{}/* fallthrough */", l2.next())?;
+                        } else if case.body.last().map_or(true, |s| !s.is_terminator()) {
+                            writeln!(self.out, "{}break;", l2.next())?;
+                        }
                     }
 
-                    for sta in case.body.iter() {
-                        self.write_stmt(sta, ctx, l2.next())?;
-                    }
-
-                    // Write fallthrough comment if the case is fallthrough,
-                    // otherwise write a break, if the case is not already
-                    // broken out of at the end of its body.
-                    if case.fall_through {
-                        writeln!(self.out, "{}/* fallthrough */", l2.next())?;
-                    } else if case.body.last().map_or(true, |s| !s.is_terminator()) {
-                        writeln!(self.out, "{}break;", l2.next())?;
-                    }
+                    writeln!(self.out, "{}}}", level)?
                 }
-
-                writeln!(self.out, "{}}}", level)?
             }
             // Loops in naga IR are based on wgsl loops, glsl can emulate the behaviour by using a
             // while true loop and appending the continuing block to the body resulting on:
